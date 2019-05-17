@@ -1,0 +1,104 @@
+CREATE TABLE curso (
+	codCurso char(15),
+	nombre varchar(25) unique not null,
+	duracion smallint not null,
+
+	primary key (codCurso)
+);
+CREATE TABLE empleado (
+	codEmp char(5),
+	nombre varchar(100) not null,
+	nif char(8) unique not null,
+	capacitado text not null,
+	
+	check (capacitado in ('S','N','s','n')),
+	primary key (codEmp)
+);
+CREATE TABLE capacitado (
+	codEmp char(5),
+
+	primary key (codEmp),
+	foreign key (codEmp) references empleado (codEmp) on update cascade on delete cascade
+);
+CREATE TABLE prerreq (
+	curso char(15),
+	cursoReq char(15),
+	obligatorio tinyint(1) not null,
+
+	primary key (curso, cursoReq),
+	foreign key (curso) references curso (codCurso) on update cascade,
+	foreign key (cursoReq) references curso (codCurso) on update cascade
+);
+CREATE TABLE edicion (
+	codCurso char(15),
+	fecha date not null,
+	lugar char(10) not null,
+	horario text not null,
+	profesor char(5) not null,
+
+	check (horario in ('M','T','I')),
+	primary key (fecha, codCurso),
+	foreign key (codCurso) references curso (codCurso) on delete cascade on update cascade,
+	foreign key (profesor) references capacitado (codEmp) on update cascade
+);
+CREATE TABLE matricula (
+	fecha date,
+	curso char(15),
+	empleado char(5),
+
+	primary key (fecha, curso, empleado),
+	foreign key (fecha, curso) references edicion (fecha, codCurso) on update cascade,
+	foreign key (empleado) references empleado (codEmp) on update cascade
+);
+CREATE TRIGGER aiEmpleado after insert on empleado
+for each row
+when exists (select new.codEmp from empleado where capacitado = 'S')
+begin
+	insert into capacitado values (new.codEmp);
+end;
+CREATE TRIGGER auEmpleado after update on empleado
+for each row
+when (old.capacitado = 'N') and (new.capacitado = 'S')
+begin
+	insert into capacitado values (new.codEmp);
+end;
+CREATE TRIGGER auEmpleado_a_no_capacitado after update on empleado
+for each row
+when (old.capacitado = 'S') and (new.capacitado = 'N')
+begin
+	delete from capacitado where old.codEmp = codEmp;
+end;
+CREATE TRIGGER bu_Edicion before update on edicion
+for each row
+when ((new.profesor is not null) and (old.profesor <> new.profesor) 
+	and exists (select * from matricula 
+		where fecha = new.fecha and codCurso = new.codCurso and new.profesor = empleado))
+begin
+	select raise (ABORT, 'El profesor asignado ya está como alumno de ese curso');
+end;
+CREATE TRIGGER bi_matricula before insert on matricula
+for each row
+when exists (select * from edicion where fecha = new.fecha and codCurso = new.curso and profesor = new.empleado)
+begin
+	select raise (ABORT, 'El empleado asignado ya está como profesor de ese curso');
+end;
+CREATE TRIGGER bi_matricula_prerreq before insert on matricula
+for each row
+when exists (select * from prerreq where curso = new.curso and obligatorio) and (new.empleado not in (select distinct new.empleado from matricula m1 
+	where not exists (select * from prerreq as p where p.curso = new.curso and p.obligatorio 
+		and not exists (select * from matricula m2 where m2.empleado = m1.empleado and m2.curso = p.cursoReq))))
+begin
+	select raise (ABORT, 'El empleado no cumple con los prerrequisitos');
+end;
+CREATE TRIGGER bu_matricula before update on matricula
+for each row
+begin
+	select raise (ABORT, 'Las matriculas no pueden ser modificadas, borrala y vuelve a crearla');
+end;
+CREATE TABLE matriculaBorradas(ts text, fecha text, curso text, empleado text);
+CREATE TRIGGER ad_matricula before delete on matricula
+for each row
+begin
+	insert into matriculaBorradas values (datetime('now','localtime'), old.fecha,old.curso,old.empleado);
+end;
+/* No STAT tables available */
